@@ -11,9 +11,12 @@ import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 
+import org.aesh.terminal.Attributes;
 import org.aesh.terminal.Connection;
+import org.aesh.terminal.tty.MouseTracking;
 import org.aesh.terminal.tty.Point;
 import org.aesh.terminal.tty.TerminalConnection;
+import org.aesh.terminal.utils.ANSI;
 
 import dev.tamboui.layout.Position;
 import dev.tamboui.layout.Size;
@@ -29,12 +32,12 @@ import dev.tamboui.terminal.Mode2027Support;
  */
 public class AeshBackend extends AbstractBackend {
 
-    private static final String ESC = "\033";
-    private static final String CSI = ESC + "[";
+    private static final String CSI = "\033[";
 
     private final Connection connection;
     private final StringBuilder outputBuffer;
     private final BlockingQueue<Integer> inputQueue;
+    private Attributes savedAttributes;
     private boolean inAlternateScreen;
     private boolean mouseEnabled;
     private boolean mode2027Enabled;
@@ -92,7 +95,7 @@ public class AeshBackend extends AbstractBackend {
     @Override
     public void clear() throws IOException {
         outputBuffer.append(CSI).append("2J");  // Clear entire screen
-        outputBuffer.append(CSI).append("H");    // Move cursor to home
+        outputBuffer.append(CSI).append("H");   // Move cursor to home
         flush();
     }
 
@@ -108,22 +111,24 @@ public class AeshBackend extends AbstractBackend {
 
     @Override
     public void showCursor() throws IOException {
-        outputBuffer.append(CSI).append("?25h");
+        outputBuffer.append(ANSI.CURSOR_SHOW);
         flush();
     }
 
     @Override
     public void hideCursor() throws IOException {
-        outputBuffer.append(CSI).append("?25l");
+        outputBuffer.append(ANSI.CURSOR_HIDE);
         flush();
     }
 
     @Override
     public Position getCursorPosition() throws IOException {
         try {
-            Point point = connection.getCursorPosition();
-            if (point != null) {
-                return new Position(point.x(), point.y());
+            if (connection.terminal() != null) {
+                Point point = connection.terminal().getCursorPosition();
+                if (point != null) {
+                    return new Position(point.x(), point.y());
+                }
             }
         } catch (Exception e) {
             // Fall through to return origin
@@ -133,21 +138,21 @@ public class AeshBackend extends AbstractBackend {
 
     @Override
     public void enterAlternateScreen() throws IOException {
-        outputBuffer.append(CSI).append("?1049h");
+        outputBuffer.append(ANSI.ALTERNATE_BUFFER);
         flush();
         inAlternateScreen = true;
     }
 
     @Override
     public void leaveAlternateScreen() throws IOException {
-        outputBuffer.append(CSI).append("?1049l");
+        outputBuffer.append(ANSI.MAIN_BUFFER);
         flush();
         inAlternateScreen = false;
     }
 
     @Override
     public void enableRawMode() throws IOException {
-        connection.enterRawMode();
+        savedAttributes = connection.enterRawMode();
         // Query and enable Mode 2027 (grapheme cluster mode) after entering raw mode
         Mode2027Status status = Mode2027Support.query(this, 500);
         if (status.isSupported()) {
@@ -163,28 +168,29 @@ public class AeshBackend extends AbstractBackend {
             Mode2027Support.disable(this);
             mode2027Enabled = false;
         }
-        // Restore original attributes - Connection doesn't have a direct disableRawMode,
-        // but enterRawMode() returns the previous attributes which we could save/restore
-        // For now, we'll rely on the connection's internal state management
+        // Restore original terminal attributes
+        if (savedAttributes != null) {
+            connection.setAttributes(savedAttributes);
+            savedAttributes = null;
+        }
     }
 
     @Override
     public void enableMouseCapture() throws IOException {
-        // Enable mouse tracking modes
-        outputBuffer.append(CSI).append("?1000h");  // Normal tracking
-        outputBuffer.append(CSI).append("?1002h");  // Button event tracking
-        outputBuffer.append(CSI).append("?1015h");  // urxvt style
-        outputBuffer.append(CSI).append("?1006h");  // SGR extended mode
+        MouseTracking.enable(outputBuffer, MouseTracking.Protocol.NORMAL);
+        MouseTracking.enable(outputBuffer, MouseTracking.Protocol.BUTTON_MOTION);
+        MouseTracking.enableEncoding(outputBuffer, MouseTracking.Encoding.URXVT);
+        MouseTracking.enableEncoding(outputBuffer, MouseTracking.Encoding.SGR);
         flush();
         mouseEnabled = true;
     }
 
     @Override
     public void disableMouseCapture() throws IOException {
-        outputBuffer.append(CSI).append("?1006l");
-        outputBuffer.append(CSI).append("?1015l");
-        outputBuffer.append(CSI).append("?1002l");
-        outputBuffer.append(CSI).append("?1000l");
+        MouseTracking.disableEncoding(outputBuffer, MouseTracking.Encoding.SGR);
+        MouseTracking.disableEncoding(outputBuffer, MouseTracking.Encoding.URXVT);
+        MouseTracking.disable(outputBuffer, MouseTracking.Protocol.BUTTON_MOTION);
+        MouseTracking.disable(outputBuffer, MouseTracking.Protocol.NORMAL);
         flush();
         mouseEnabled = false;
     }
@@ -309,7 +315,7 @@ public class AeshBackend extends AbstractBackend {
     public void close() throws IOException {
         try {
             // Reset state
-            outputBuffer.append(CSI).append("0m");  // Reset style
+            outputBuffer.append(ANSI.RESET);
 
             if (mouseEnabled) {
                 disableMouseCapture();
