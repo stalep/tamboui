@@ -147,6 +147,9 @@ public final class Terminal<B extends Backend> implements AutoCloseable {
 
                 cleanupRawOutput(frame.rawOutputAreas());
 
+                // Begin synchronized output frame
+                backend.beginFrame();
+
                 // Calculate diff and draw (zero-allocation DoD variant)
                 previousBuffer.diff(currentBuffer, diffResult);
                 if (!diffResult.isEmpty()) {
@@ -177,8 +180,9 @@ public final class Terminal<B extends Backend> implements AutoCloseable {
                     }
                 }
 
-                // Flush output
+                // Flush output and end synchronized frame
                 backend.flush();
+                backend.endFrame();
 
                 // Swap buffers
                 Buffer temp = previousBuffer;

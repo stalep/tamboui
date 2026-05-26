@@ -18,6 +18,30 @@ import dev.tamboui.layout.Size;
 public interface Backend extends AutoCloseable {
 
     /**
+     * Called before the frame rendering cycle (draw + cursor + flush).
+     * <p>
+     * Implementations can use this to enable synchronized output (e.g., DEC Mode 2026)
+     * to prevent screen tearing during frame rendering.
+     *
+     * @throws IOException if writing to the terminal fails
+     */
+    default void beginFrame() throws IOException {
+        // Optional: not all backends support synchronized output
+    }
+
+    /**
+     * Called after the frame rendering cycle (draw + cursor + flush).
+     * <p>
+     * Implementations should disable synchronized output here so the terminal
+     * renders the complete frame atomically.
+     *
+     * @throws IOException if writing to the terminal fails
+     */
+    default void endFrame() throws IOException {
+        // Optional: not all backends support synchronized output
+    }
+
+    /**
      * Draws the given cell updates to the terminal using a Data-Oriented Design approach.
      * <p>
      * This is the primary rendering method, optimized for zero allocations with parallel arrays.

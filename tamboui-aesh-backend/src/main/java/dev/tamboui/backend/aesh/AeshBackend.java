@@ -21,6 +21,8 @@ import org.aesh.terminal.utils.ANSI;
 import dev.tamboui.layout.Position;
 import dev.tamboui.layout.Size;
 import dev.tamboui.terminal.AbstractBackend;
+import dev.tamboui.terminal.Mode2026Status;
+import dev.tamboui.terminal.Mode2026Support;
 import dev.tamboui.terminal.Mode2027Status;
 import dev.tamboui.terminal.Mode2027Support;
 
@@ -40,6 +42,7 @@ public class AeshBackend extends AbstractBackend {
     private Attributes savedAttributes;
     private boolean inAlternateScreen;
     private boolean mouseEnabled;
+    private boolean mode2026Supported;
     private boolean mode2027Enabled;
     private Runnable resizeHandler;
 
@@ -67,6 +70,7 @@ public class AeshBackend extends AbstractBackend {
         this.inputQueue = new LinkedBlockingQueue<>();
         this.inAlternateScreen = false;
         this.mouseEnabled = false;
+        this.mode2026Supported = false;
         this.mode2027Enabled = false;
 
         // Set up input handler to queue characters
@@ -151,8 +155,25 @@ public class AeshBackend extends AbstractBackend {
     }
 
     @Override
+    public void beginFrame() throws IOException {
+        if (mode2026Supported) {
+            Mode2026Support.enable(this);
+        }
+    }
+
+    @Override
+    public void endFrame() throws IOException {
+        if (mode2026Supported) {
+            Mode2026Support.disable(this);
+        }
+    }
+
+    @Override
     public void enableRawMode() throws IOException {
         savedAttributes = connection.enterRawMode();
+        // Query and enable Mode 2026 (synchronized output) — result is cached
+        Mode2026Status syncStatus = Mode2026Support.query(this, 500);
+        mode2026Supported = syncStatus.isSupported();
         // Query and enable Mode 2027 (grapheme cluster mode) after entering raw mode
         Mode2027Status status = Mode2027Support.query(this, 500);
         if (status.isSupported()) {
