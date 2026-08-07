@@ -127,6 +127,41 @@ public interface Backend extends AutoCloseable {
         // Optional: not all backends support mouse
     }
 
+    /** Mode 2026 Begin Synchronized Update escape sequence. */
+    String MODE_2026_BSU = "\033[?2026h";
+    /** Mode 2026 End Synchronized Update escape sequence. */
+    String MODE_2026_ESU = "\033[?2026l";
+
+    /**
+     * Begins a synchronized update (Mode 2026 BSU).
+     * <p>
+     * When supported, the terminal buffers all subsequent output until
+     * {@link #endSynchronizedUpdate()} is called, then renders everything
+     * in a single frame. This prevents screen tearing during redraws.
+     * <p>
+     * Terminals that do not support Mode 2026 safely ignore the escape sequence.
+     *
+     * @throws IOException if the operation fails
+     */
+    default void beginSynchronizedUpdate() throws IOException {
+        // Optional: not all backends support synchronized output
+    }
+
+    /**
+     * Ends a synchronized update (Mode 2026 ESU).
+     * <p>
+     * The terminal renders all buffered output since the last
+     * {@link #beginSynchronizedUpdate()} call as a single atomic frame.
+     * <p>
+     * Must be called in a {@code finally} block to avoid leaving the
+     * terminal in a stuck buffering state.
+     *
+     * @throws IOException if the operation fails
+     */
+    default void endSynchronizedUpdate() throws IOException {
+        // Optional: not all backends support synchronized output
+    }
+
     /**
      * Enables bracketed paste mode ({@code ESC[?2004h}).
      * <p>
