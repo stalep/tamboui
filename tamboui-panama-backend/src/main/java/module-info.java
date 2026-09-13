@@ -11,6 +11,7 @@ import dev.tamboui.terminal.BackendProvider;
  * Requires Java 22 or later for the finalized FFI API.
  */
 module dev.tamboui.panama.backend {
+    requires jdk.unsupported;
     requires transitive dev.tamboui.core;
 
     exports dev.tamboui.backend.panama;

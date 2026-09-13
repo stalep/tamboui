@@ -19,7 +19,6 @@ import java.util.concurrent.locks.ReentrantLock;
 import dev.tamboui.backend.panama.PlatformTerminal;
 import dev.tamboui.error.RuntimeIOException;
 import dev.tamboui.layout.Size;
-import dev.tamboui.terminal.BackendException;
 
 /**
  * Unix terminal operations using Panama FFI.
@@ -75,9 +74,8 @@ public final class UnixTerminal implements PlatformTerminal {
     private int peekedChar = -2;
     private final ReentrantLock resizeLock = new ReentrantLock();
     private Runnable resizeHandler;
-    private boolean resizePending;
-    private MemorySegment previousSigaction;  // Previous sigaction struct (for restoration)
-    private Arena signalArena;
+    private volatile boolean resizePending;
+    private SignalBridge signalBridge;
 
     /**
      * Creates a new Unix terminal instance.
@@ -429,9 +427,8 @@ public final class UnixTerminal implements PlatformTerminal {
     /**
      * Registers a handler to be called when the terminal is resized.
      * <p>
-     * On Unix systems, this installs a SIGWINCH signal handler using Panama FFI.
-     * The signal handler sets a flag which is checked from the main event loop
-     * (via {@link #read(int)}), ensuring the handler is called from a safe context.
+     * SIGWINCH is dispatched through the JVM signal bridge. The bridge callback
+     * only marks the resize as pending; {@link #read(int)} invokes the handler.
      * <p>
      * Only one handler can be registered at a time; subsequent calls
      * will replace the previous handler.
@@ -441,43 +438,12 @@ public final class UnixTerminal implements PlatformTerminal {
     public void onResize(Runnable handler) {
         resizeLock.lock();
         try {
-            this.resizeHandler = handler;
-            if (handler != null && signalArena == null) {
-                // Create a dedicated arena for the signal handler that lives as long as needed
-                signalArena = Arena.ofShared();
-
-                // Create the upcall stub for our signal handler
-                // IMPORTANT: We only set a flag here, NOT call the handler directly.
-                // Calling complex code from signal context can cause crashes.
-                var signalHandlerStub = LibC.createSignalHandler(signalArena, signum -> {
-                    resizeLock.lock();
-                    try {
-                        resizePending = true;
-                    } finally {
-                        resizeLock.unlock();
-                    }
-                });
-
-                // Use sigaction() instead of signal() for better reliability on macOS
-                // Allocate sigaction structs
-                MemorySegment newSigaction = LibC.allocateSigaction(signalArena);
-                MemorySegment oldSigaction = LibC.allocateSigaction(signalArena);
-                
-                // Set up new sigaction: handler pointer, NULL trampoline, empty mask, SA_RESTART flag
-                LibC.setSigactionHandler(newSigaction, signalHandlerStub);
-                LibC.setSigactionTramp(newSigaction, MemorySegment.NULL);  // NULL for simple handlers
-                LibC.setSigactionMask(newSigaction, 0);
-                LibC.setSigactionFlags(newSigaction, LibC.SA_RESTART);
-                
-                // Install the signal handler and save the previous one
-                int sigactionResult = LibC.sigaction(LibC.SIGWINCH, newSigaction, oldSigaction);
-                
-                if (sigactionResult != 0) {
-                    throw new BackendException("Failed to install signal handler for Unix terminal (errno=" + LibC.getLastErrno() + ")");
-                }
-                
-                // Save the old sigaction for restoration on close
-                previousSigaction = oldSigaction;
+            resizeHandler = handler;
+            if (handler != null && signalBridge == null) {
+                signalBridge = SignalBridge.onWindowChange(() -> resizePending = true);
+            } else if (handler == null && signalBridge != null) {
+                signalBridge.close();
+                signalBridge = null;
             }
         } finally {
             resizeLock.unlock();
@@ -513,18 +479,11 @@ public final class UnixTerminal implements PlatformTerminal {
                 disableRawMode();
             }
         } finally {
-            // Restore previous SIGWINCH handler using sigaction
-            if (previousSigaction != null) {
-                LibC.sigaction(LibC.SIGWINCH, previousSigaction, MemorySegment.NULL);
-                previousSigaction = null;
+            if (signalBridge != null) {
+                signalBridge.close();
+                signalBridge = null;
             }
             resizeHandler = null;
-
-            // Close the signal arena (this invalidates the upcall stub)
-            if (signalArena != null) {
-                signalArena.close();
-                signalArena = null;
-            }
 
             // Don't close stdin on macOS
             if (!PlatformConstants.isMacOS()) {

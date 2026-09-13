@@ -1,5 +1,6 @@
 plugins {
     id("dev.tamboui.java-library")
+    id("org.graalvm.buildtools.native")
 }
 
 description = "Panama FFI backend for TamboUI TUI library"
@@ -12,6 +13,13 @@ tasks.withType<JavaCompile>().configureEach {
 
 tasks.withType<Test> {
     jvmArgs("--enable-native-access=ALL-UNNAMED")
+}
+
+graalvmNative {
+    binaries.named("test") {
+        buildArgs.addAll("--enable-native-access=ALL-UNNAMED", "-H:+SharedArenaSupport")
+    }
+    toolchainDetection.set(false)
 }
 
 dependencies {

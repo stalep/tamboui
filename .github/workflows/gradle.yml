@@ -78,6 +78,9 @@ jobs:
       - uses: ./.github/actions/shared-build-setup
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Test Panama signal handling in native image
+        if: runner.os != 'Windows'
+        run: ./gradlew :tamboui-panama-backend:nativeTest
       - name: Build native executable
         run: ./gradlew demos:filemanager-demo:nativeCompile
       # - name: Run demo, send q after 2s (Unix) fails as no pty.
