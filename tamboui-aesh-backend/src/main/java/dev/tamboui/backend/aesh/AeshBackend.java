@@ -215,6 +215,16 @@ public class AeshBackend extends AbstractBackend {
     }
 
     @Override
+    public void beginSynchronizedUpdate() throws IOException {
+        outputBuffer.append(MODE_2026_BSU);
+    }
+
+    @Override
+    public void endSynchronizedUpdate() throws IOException {
+        outputBuffer.append(MODE_2026_ESU);
+    }
+
+    @Override
     public void scrollUp(int lines) throws IOException {
         outputBuffer.append(CSI).append(lines).append("S");
         flush();
