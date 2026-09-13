@@ -8,6 +8,8 @@ import java.util.EnumSet;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
+import java.util.TreeSet;
 
 import dev.tamboui.buffer.Buffer;
 import dev.tamboui.buffer.Cell;
@@ -74,6 +76,7 @@ public final class HtmlExporter {
 
         final Map<String, Integer> cssToClassNo = new LinkedHashMap<>();
         int nextClassNo = 1;
+        final Set<Integer> wideWidths = new TreeSet<>();
 
         StringBuilder code = new StringBuilder();
 
@@ -83,32 +86,45 @@ public final class HtmlExporter {
                 Cell cell = buffer.get(baseX + x, baseY + y);
                 Style style = cell.style();
 
-                StringBuilder runText = new StringBuilder();
+                StringBuilder runHtml = new StringBuilder();
+                boolean hasContent = false;
                 while (x < widthCells) {
                     Cell c = buffer.get(baseX + x, baseY + y);
-                    if (!c.style().equals(style)) {
+                    // Continuation cells belong to the preceding wide grapheme, so keep them
+                    // in the same run even though they carry Style.EMPTY.
+                    if (!c.isContinuation() && !c.style().equals(style)) {
                         break;
+                    }
+                    if (c.isContinuation()) {
+                        x++;
+                        continue;
                     }
                     String sym = c.symbol();
                     if (!sym.isEmpty()) {
-                        runText.append(sym);
+                        // Display width = 1 base cell plus any following continuation cells.
+                        int glyphCols = 1;
+                        int k = x + 1;
+                        while (k < widthCells && buffer.get(baseX + k, baseY + y).isContinuation()) {
+                            glyphCols++;
+                            k++;
+                        }
+                        appendGlyph(runHtml, escapeHtml(sym), glyphCols, options.inlineStyles, wideWidths);
+                        hasContent = true;
                     }
                     x++;
                 }
 
-                String text = runText.toString();
-                if (text.isEmpty()) {
+                if (!hasContent) {
                     continue;
                 }
 
                 String htmlStyle = styleToHtmlCss(style, defaultForeground, defaultBackground);
-                String escaped = escapeHtml(text);
 
                 if (options.inlineStyles) {
                     if (!htmlStyle.isEmpty()) {
-                        code.append("<span style=\"").append(htmlStyle).append("\">").append(escaped).append("</span>");
+                        code.append("<span style=\"").append(htmlStyle).append("\">").append(runHtml).append("</span>");
                     } else {
-                        code.append(escaped);
+                        code.append(runHtml);
                     }
                 } else {
                     Integer classNo = cssToClassNo.get(htmlStyle);
@@ -116,7 +132,7 @@ public final class HtmlExporter {
                         classNo = nextClassNo++;
                         cssToClassNo.put(htmlStyle, classNo);
                     }
-                    code.append("<span class=\"r").append(classNo).append("\">").append(escaped).append("</span>");
+                    code.append("<span class=\"r").append(classNo).append("\">").append(runHtml).append("</span>");
                 }
             }
             if (y < heightCells - 1) {
@@ -132,6 +148,9 @@ public final class HtmlExporter {
                     stylesheet.append(".r").append(e.getValue()).append(" { ").append(rule).append(" }\n");
                 }
             }
+            for (Integer cols : wideWidths) {
+                stylesheet.append(".cw").append(cols).append(" { ").append(wideGlyphCss(cols)).append(" }\n");
+            }
         }
 
         String foreground = toHex(defaultForeground);
@@ -142,6 +161,47 @@ public final class HtmlExporter {
             .replace("{stylesheet}", stylesheet.toString())
             .replace("{foreground}", foreground)
             .replace("{background}", background);
+    }
+
+    /**
+     * Appends a single grapheme to the run, pinning wide (CJK/emoji) glyphs to their exact
+     * column count so they cannot push adjacent columns and borders out of alignment when the
+     * browser falls back to a font whose advance width differs from the assumed monospace width.
+     * Single-column glyphs (including box-drawing borders) are emitted as plain text so they
+     * still connect vertically in the {@code <pre>} block.
+     *
+     * @param sb          the run buffer to append to
+     * @param escaped      the HTML-escaped glyph
+     * @param glyphCols    the display width of the glyph in columns
+     * @param inlineStyles whether to inline the width or reference a shared class
+     * @param wideWidths   collects the distinct wide widths so their classes can be emitted
+     */
+    private static void appendGlyph(StringBuilder sb, String escaped, int glyphCols,
+            boolean inlineStyles, Set<Integer> wideWidths) {
+        if (glyphCols <= 1) {
+            sb.append(escaped);
+            return;
+        }
+        if (inlineStyles) {
+            sb.append("<span style=\"").append(wideGlyphCss(glyphCols)).append("\">")
+                .append(escaped).append("</span>");
+        } else {
+            wideWidths.add(glyphCols);
+            sb.append("<span class=\"cw").append(glyphCols).append("\">").append(escaped).append("</span>");
+        }
+    }
+
+    /**
+     * CSS that pins a wide glyph to an exact number of monospace columns. {@code 1ch} equals the
+     * advance of the {@code 0} glyph, i.e. one column in a monospace font. Overflow is left
+     * visible so the glyph keeps its natural baseline (an {@code overflow:hidden} inline-block
+     * would shift the baseline and misalign it vertically with surrounding text).
+     *
+     * @param cols the number of display columns the glyph must occupy
+     * @return the inline-block width declaration for the glyph
+     */
+    private static String wideGlyphCss(int cols) {
+        return "display:inline-block;width:" + cols + "ch";
     }
 
     private static String minimalHtml(Color.Rgb defaultFg, Color.Rgb defaultBg) {

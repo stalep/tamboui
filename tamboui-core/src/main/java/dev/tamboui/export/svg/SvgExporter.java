@@ -119,7 +119,9 @@ public final class SvgExporter {
                 StringBuilder runText = new StringBuilder();
                 while (x < widthCells) {
                     Cell c = buffer.get(baseX + x, baseY + y);
-                    if (!c.style().equals(style)) {
+                    // Continuation cells belong to the preceding wide grapheme, so keep them
+                    // in the same run even though they carry Style.EMPTY.
+                    if (!c.isContinuation() && !c.style().equals(style)) {
                         break;
                     }
                     runText.append(c.symbol());
