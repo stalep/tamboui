@@ -329,7 +329,7 @@ public final class HtmlExporter {
         + "</style>\n"
         + "</head>\n"
         + "<body>\n"
-        + "    <pre style=\"font-family:Menlo,'DejaVu Sans Mono',consolas,'Courier New',monospace\"><code style=\"font-family:inherit\">{code}</code></pre>\n"
+        + "    <pre style=\"font-family:Menlo,'DejaVu Sans Mono',consolas,'Courier New',monospace;line-height:1.2\"><code style=\"font-family:inherit\">{code}</code></pre>\n"
         + "</body>\n"
         + "</html>";
 }

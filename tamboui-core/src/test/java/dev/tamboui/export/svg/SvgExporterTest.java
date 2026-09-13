@@ -56,11 +56,11 @@ final class SvgExporterTest {
     }
 
     @Test
-    void textLengthMatchesDisplayColumnsForWideCharsAndEmoji() {
-        // Regression test for #415: box-drawing borders must align with content
-        // rows even when content contains wide (CJK) and emoji glyphs. Each
-        // <text> run must be sized by its display-column count, not by the
-        // number of UTF-16 code units in its symbols.
+    void textSegmentsSnapToTheColumnGridForWideCharsAndEmoji() {
+        // Regression test for #415: box-drawing borders must align with content rows even
+        // when content contains wide (CJK) and emoji glyphs. Every <text> segment must sit
+        // on the column grid: both its x offset and its textLength must be whole multiples
+        // of the column width, so wide/emoji glyphs cannot drift neighbouring columns.
         Buffer buffer = Buffer.empty(new Rect(0, 0, 12, 3));
         buffer.setString(0, 0, "\u256d\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e", Style.EMPTY);
         // │世界AB🔮X│ : side bars + CJK (2 cols each) + ASCII + emoji (2 cols) = 12 columns
@@ -69,23 +69,33 @@ final class SvgExporterTest {
 
         String svg = export(buffer).as(Formats.SVG).options(o -> o.uniqueId("align")).toString();
 
-        List<Double> textLengths = textLengths(svg);
-        assertEquals(3, textLengths.size(), "expected one <text> run per row");
-        // All three rows span the same 12 display columns, so their textLength
-        // must be identical regardless of underlying UTF-16 length.
-        assertEquals(textLengths.get(0), textLengths.get(1), 0.0001,
-            "content row must have the same width as the top border");
-        assertEquals(textLengths.get(0), textLengths.get(2), 0.0001,
-            "bottom border must have the same width as the top border");
+        // charWidth = fontSize (20) * fontAspectRatio (0.61) = 12.2 user units per column.
+        double charWidth = 12.2;
+        List<double[]> segments = textSegments(svg);
+        assertFalse(segments.isEmpty(), "expected <text> segments in the export");
+        for (double[] seg : segments) {
+            double x = seg[0];
+            double textLength = seg[1];
+            assertEquals(0.0, remainderToGrid(x, charWidth), 0.01,
+                "segment x must sit on the column grid: " + x);
+            assertEquals(0.0, remainderToGrid(textLength, charWidth), 0.01,
+                "segment textLength must be a whole number of columns: " + textLength);
+        }
     }
 
-    private static List<Double> textLengths(String svg) {
-        List<Double> values = new ArrayList<>();
-        Matcher matcher = Pattern.compile("textLength=\"([0-9.]+)\"").matcher(svg);
+    private static double remainderToGrid(double value, double unit) {
+        double columns = value / unit;
+        return Math.abs(columns - Math.rint(columns)) * unit;
+    }
+
+    private static List<double[]> textSegments(String svg) {
+        List<double[]> segments = new ArrayList<>();
+        Matcher matcher = Pattern.compile("<text[^>]*\\bx=\"([0-9.]+)\"[^>]*textLength=\"([0-9.]+)\"")
+            .matcher(svg);
         while (matcher.find()) {
-            values.add(Double.parseDouble(matcher.group(1)));
+            segments.add(new double[]{Double.parseDouble(matcher.group(1)), Double.parseDouble(matcher.group(2))});
         }
-        return values;
+        return segments;
     }
 
     @Test
