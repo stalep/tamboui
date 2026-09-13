@@ -114,18 +114,19 @@ public final class SvgExporter {
                 Cell cell = buffer.get(baseX + x, baseY + y);
                 Style style = cell.style();
 
-                // Build a run of same style for fewer nodes
+                // Build a run of same style for a single background rect.
                 int runStart = x;
-                StringBuilder runText = new StringBuilder();
                 while (x < widthCells) {
                     Cell c = buffer.get(baseX + x, baseY + y);
-                    if (!c.style().equals(style)) {
+                    // Continuation cells belong to the preceding wide grapheme, so keep them
+                    // in the same run even though they carry Style.EMPTY.
+                    if (!c.isContinuation() && !c.style().equals(style)) {
                         break;
                     }
-                    runText.append(c.symbol());
                     x++;
                 }
                 int runLen = x - runStart;
+                int runEnd = x;
 
                 ResolvedColors colors = resolveColors(style, defaultForeground, defaultBackground);
                 boolean hasBackground = colors.hasBackground;
@@ -151,17 +152,39 @@ public final class SvgExporter {
                     ));
                 }
 
-                String text = runText.toString();
-                if (!isAllSpaces(text)) {
-                    matrix.append(makeTag(
-                        "text",
-                        escapeText(text),
-                        "class", className,
-                        "x", format(runStart * charWidth),
-                        "y", format(y * lineHeight + charHeight),
-                        "textLength", format(charWidth * runLen),
-                        "clip-path", "url(#" + uniqueId + "-line-" + y + ")"
-                    ));
+                // Emit text in segments so each glyph sits at its exact column: consecutive
+                // 1-wide cells share one <text> (evenly distributed = column-aligned), while each
+                // wide glyph gets its own <text> pinned to its column span. A single textLength
+                // over the whole run would distribute spacing unevenly and drift the columns.
+                int seg = runStart;
+                while (seg < runEnd) {
+                    boolean wideBase = seg + 1 < runEnd
+                        && buffer.get(baseX + seg + 1, baseY + y).isContinuation();
+                    if (wideBase) {
+                        int glyphCols = 1;
+                        int k = seg + 1;
+                        while (k < runEnd && buffer.get(baseX + k, baseY + y).isContinuation()) {
+                            glyphCols++;
+                            k++;
+                        }
+                        appendTextSegment(matrix, buffer.get(baseX + seg, baseY + y).symbol(),
+                            seg, glyphCols, charWidth, lineHeight, charHeight, y, className, uniqueId);
+                        seg = k;
+                    } else {
+                        int segStart = seg;
+                        StringBuilder segText = new StringBuilder();
+                        while (seg < runEnd) {
+                            boolean nextWide = seg + 1 < runEnd
+                                && buffer.get(baseX + seg + 1, baseY + y).isContinuation();
+                            if (nextWide) {
+                                break;
+                            }
+                            segText.append(buffer.get(baseX + seg, baseY + y).symbol());
+                            seg++;
+                        }
+                        appendTextSegment(matrix, segText.toString(), segStart, seg - segStart,
+                            charWidth, lineHeight, charHeight, y, className, uniqueId);
+                    }
                 }
             }
         }
@@ -358,6 +381,41 @@ public final class SvgExporter {
 
     private static int clamp(int v) {
         return Math.max(0, Math.min(255, v));
+    }
+
+    /**
+     * Emits a single {@code <text>} segment positioned at an exact column and pinned to a fixed
+     * number of display columns via {@code textLength}, so that wide (CJK/emoji) glyphs cannot
+     * push neighbouring columns and borders out of alignment regardless of the rendering font.
+     * All-space segments are skipped (their columns are still accounted for by the caller's
+     * absolute positioning).
+     *
+     * @param matrix     the buffer collecting {@code <text>} nodes
+     * @param text       the segment text
+     * @param startCol   the segment's starting column within the exported region
+     * @param cols       the segment's display width in columns
+     * @param charWidth  the width of one column in user units
+     * @param lineHeight the height of one row in user units
+     * @param charHeight the text baseline offset within a row
+     * @param y          the row index within the exported region
+     * @param className  the CSS class carrying the segment's style
+     * @param uniqueId   the export's unique id (for the per-line clip path)
+     */
+    private static void appendTextSegment(StringBuilder matrix, String text, int startCol, int cols,
+            double charWidth, double lineHeight, double charHeight, int y, String className,
+            String uniqueId) {
+        if (isAllSpaces(text)) {
+            return;
+        }
+        matrix.append(makeTag(
+            "text",
+            escapeText(text),
+            "class", className,
+            "x", format(startCol * charWidth),
+            "y", format(y * lineHeight + charHeight),
+            "textLength", format(charWidth * cols),
+            "clip-path", "url(#" + uniqueId + "-line-" + y + ")"
+        ));
     }
 
     private static boolean isAllSpaces(String text) {

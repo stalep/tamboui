@@ -47,8 +47,11 @@ public final class ExportDemo {
     private static final List<String[]> TABLE_DATA = List.of(
         new String[]{"Dec 20, 2019", "Star Wars: The Rise of Skywalker", "$952,110,690"},
         new String[]{"May 25, 2018", "Solo: A Star Wars Story", "$393,151,347"},
-        new String[]{"Dec 15, 2017", "Star Wars Ep. VIII: The Last Jedi", "$1,332,539,889"},
-        new String[]{"Dec 16, 2016", "Rogue One: A Star Wars Story", "$1,332,439,889"}
+        // Wide (CJK) and emoji content exercises SVG column alignment (see #415):
+        // borders and side bars must stay aligned with cells whose display width
+        // differs from their UTF-16 length.
+        new String[]{"Dec 15, 2017", "スター・ウォーズ 最後のジェダイ 🎬", "$1,332,539,889"},
+        new String[]{"Dec 16, 2016", "Rogue One ⭐ A Star Wars Story", "$1,332,439,889"}
     );
 
     private ExportDemo() {
